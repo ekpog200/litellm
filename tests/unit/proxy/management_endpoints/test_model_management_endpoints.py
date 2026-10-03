@@ -44,6 +44,44 @@ async def _passthrough_row(update_data):
     return update_data
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["openai/test-model", "auto_router/complexity_router"])
+@pytest.mark.parametrize("team_role", ["admin", "user"])
+@pytest.mark.parametrize("team_key", [False, True])
+async def test_model_creation_disabled_before_any_write(
+    monkeypatch: pytest.MonkeyPatch, model: str, team_role: str, team_key: bool
+) -> None:
+    from litellm.proxy import proxy_server
+    from litellm.proxy.management_endpoints.model_management_endpoints import add_new_model
+
+    prisma: Final = MagicMock()
+    prisma.db.litellm_teamtable.find_unique = AsyncMock(return_value=LiteLLM_TeamTable(
+        team_id="test_team", members_with_roles=[Member(user_id="test_user", role=team_role)],
+        team_member_permissions=["/auto_router/manage"],
+    ))
+    monkeypatch.setattr(proxy_server, "prisma_client", prisma)
+    monkeypatch.setattr(proxy_server, "general_settings", {"disable_model_add_for_internal_users": True})
+    monkeypatch.setattr(proxy_server, "premium_user", True)
+    with pytest.raises(ProxyException, match="disable_model_add_for_internal_users") as error:
+        await add_new_model(
+            model_params=Deployment(
+                model_name="creation-policy-test",
+                litellm_params={"model": model, "disable_model_add_for_internal_users": False},
+                model_info={"team_id": "test_team"},
+            ),
+            user_api_key_dict=UserAPIKeyAuth(
+                user_id="test_user", user_role=LitellmUserRoles.INTERNAL_USER,
+                team_id="test_team" if team_key else None,
+            ),
+        )
+    assert error.value.code == "403"
+    prisma.db.litellm_proxymodeltable.create.assert_not_called()
+    prisma.db.litellm_teamtable.update.assert_not_called()
+    prisma.db.litellm_teamtable.find_unique.assert_not_called()
+    prisma.db.litellm_uisettings.find_unique.assert_not_called()
+    prisma.writer_db.litellm_uisettings.find_unique.assert_not_called()
+
+
 async def _write_empty_row(**kwargs):
     return await kwargs["write_row"]({})
 

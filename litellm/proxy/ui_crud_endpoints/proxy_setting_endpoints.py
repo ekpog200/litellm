@@ -240,7 +240,11 @@ class UISettings(BaseModel):
 
     disable_model_add_for_internal_users: bool = Field(
         default=False,
-        description="If true, internal users cannot add models from the UI",
+        description=(
+            "If true, internal users cannot create models or auto routers through the UI or API, "
+            "including team admins and members with auto-router management permission. "
+            "Proxy admins are exempt. Editing and deleting existing models are unchanged."
+        ),
     )
 
     disable_team_admin_delete_team_user: bool = Field(
@@ -403,6 +407,7 @@ def _derived_ui_setting_value(key: str) -> object:
 # Flags that must be synced from the persisted UISettings into
 # general_settings at runtime (on both read and write).
 _RUNTIME_GENERAL_SETTINGS_FLAGS: Final = [
+    "disable_model_add_for_internal_users",
     "allow_public_health_readiness_details",
     "forward_client_headers_to_llm_api",
     "forward_llm_provider_auth_headers",
@@ -1706,6 +1711,11 @@ async def get_ui_settings_cached() -> dict[str, JsonValue]:
 
 
 _UI_SETTINGS_OBJECT: Final = TypeAdapter(dict[str, JsonValue])
+
+
+def model_creation_disabled_for_internal_users(settings: Mapping[str, object]) -> bool:
+    setting: Final = "disable_model_add_for_internal_users"
+    return UISettings.model_validate({setting: settings.get(setting, False)}).disable_model_add_for_internal_users
 
 
 def apply_runtime_general_settings_flags(ui_settings: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
